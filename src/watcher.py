@@ -18,6 +18,7 @@ TIMEOUT = float(os.environ.get("TIMEOUT", "3600"))     # max. seconden per conve
 LOG = STEP / "conversie.log"
 PREVIEW = Path(os.environ.get("PREVIEW_DIR", Path.home() / "preview"))   # 3D-previews voor de webpagina
 BEZIG = STATE.with_name("stl2step_bezig.txt")           # naam van het bestand dat nu wordt omgezet (voor de webpagina)
+MQTT_HOST = os.environ.get("MQTT_HOST", "")                  # leeg = geen MQTT-melding
 
 
 def log(msg):
@@ -28,6 +29,31 @@ def log(msg):
             f.write(regel + "\n")
     except OSError:
         pass
+
+
+def stuur(topic, data):
+    """Stuur een bericht naar MQTT. Mag de watcher nooit laten crashen."""
+    if not MQTT_HOST:
+        return
+    try:
+        import paho.mqtt.publish as publish
+        publish.single(topic, json.dumps(data), qos=1, retain=True, hostname=MQTT_HOST,
+                       auth={"username": os.environ.get("MQTT_USER", ""),
+                             "password": os.environ.get("MQTT_PASS", "")})
+    except Exception as e:
+        log("MQTT-melding mislukt: %s" % e)
+
+
+def meld(status, bestand, tekst):
+    stuur("stl2step/status", {"status": status, "bestand": bestand, "tekst": tekst,
+                              "tijd": datetime.datetime.now().isoformat(timespec="seconds")})
+
+
+def meld_aan_ha():
+    stuur("homeassistant/sensor/stl2step/config", {
+        "name": "STL2STEP", "unique_id": "stl2step_status",
+        "state_topic": "stl2step/status", "value_template": "{{ value_json.status }}",
+        "json_attributes_topic": "stl2step/status", "icon": "mdi:printer-3d"})
 
 
 def laad_state():
@@ -87,6 +113,7 @@ def converteer(stl):
         pvtmp.unlink(missing_ok=True)
         fout.unlink(missing_ok=True)
         log("klaar: %s -> %s (%.0f s)" % (stl.name, doel.name, time.time() - t0))
+        meld("klaar", stl.name, "%.0f s" % (time.time() - t0))
         for r in details.splitlines():
             log("    " + r)
     else:
@@ -96,6 +123,7 @@ def converteer(stl):
         fout.write_text("Conversie van %s mislukt.\n\n%s\n\n%s\n" % (stl.name, details, uitvoer[-4000:]),
                         encoding="utf-8")
         log("MISLUKT: %s (zie %s)" % (stl.name, fout.name))
+        meld("mislukt", stl.name, "%s (%.0f s)" % (fout.name, time.time() - t0))
     return ok
 
 
@@ -107,6 +135,7 @@ def main():
     state = laad_state()
     vorige = {}
     log("watcher gestart; map: %s" % STL)
+    meld_aan_ha()
     while True:
         nu = {}
         try:
