@@ -29,6 +29,7 @@ var_bridge="vmbr0"
 var_ip="dhcp"       # of bijv. 192.168.25.40/24
 var_gw=""
 var_unprivileged="1"
+var_lan=""          # LAN-subnet dat bij webpagina en share mag, bijv. 192.168.1.0/24
 POORT=8080
 
 YW="\033[33m"; BL="\033[36m"; RD="\033[01;31m"; GN="\033[1;92m"; DGN="\033[32m"; CL="\033[m"; BFR="\\r\\033[K"; HOLD=" "
@@ -36,6 +37,7 @@ CM="${GN}✓${CL}"; CROSS="${RD}✗${CL}"
 msg_info()  { echo -ne " ${HOLD} ${YW}$1...${CL}"; }
 msg_ok()    { echo -e "${BFR} ${CM} ${GN}$1${CL}"; }
 msg_error() { echo -e "${BFR} ${CROSS} ${RD}$1${CL}" >&2; }
+msg_warning() { echo -e "${BFR} ${YW}!${CL} ${YW}$1${CL}" >&2; }
 afbreken()  { echo -e "\n ${CROSS} ${RD}Afgebroken, er is niets gewijzigd.${CL}"; exit 1; }
 trap 'msg_error "Fout op regel $LINENO (commando: $BASH_COMMAND)"' ERR
 
@@ -77,6 +79,7 @@ kies_opslag() {  # kies_opslag <inhoudstype> <omschrijving>
 
 instellingen() {
   var_ctid=$(pvesh get /cluster/nextid)
+  var_lan=$(pve-firewall localnet | awk '/using detected/ {print $NF}')
   local keuze
   keuze=$(whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "INSTELLINGEN" --menu "Kies een optie:" 12 62 2 \
     "1" "Standaardinstellingen" \
@@ -93,8 +96,10 @@ instellingen() {
       [[ "$var_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] || { msg_error "Ongeldig IP-adres: $var_ip (verwacht bijv. 192.168.1.40/24)"; exit 1; }
       var_gw=$(vraag "GATEWAY" "Gateway (adres van je router):" "${var_ip%.*}.1")
     fi
+    var_lan=$(vraag "LAN" "Welk netwerk mag bij webpagina en share (bijv. 192.168.1.0/24):" "$var_lan")
   fi
   [[ "$var_ctid" =~ ^[0-9]+$ ]] || { msg_error "Ongeldige container-ID: $var_ctid"; exit 1; }
+  [[ "$var_lan" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] || { msg_error "Ongeldig LAN-subnet: '$var_lan' (verwacht bijv. 192.168.1.0/24)"; exit 1; }
   if pct status "$var_ctid" >/dev/null 2>&1 || qm status "$var_ctid" >/dev/null 2>&1; then
     msg_error "ID $var_ctid is al in gebruik."; exit 1
   fi
@@ -176,7 +181,7 @@ if ! pveam list "$TSTORE" | grep -q "$TEMPLATE"; then
 fi
 
 msg_info "LXC-container aanmaken"
-NET="name=eth0,bridge=$var_bridge,ip=$var_ip"
+NET="name=eth0,bridge=$var_bridge,ip=$var_ip,firewall=1"
 [ -n "$var_gw" ] && NET="$NET,gw=$var_gw"
 pct create "$var_ctid" "$TSTORE:vztmpl/$TEMPLATE" \
   --hostname "$var_hostname" --cores "$var_cpu" --memory "$var_ram" --swap 512 \
@@ -185,6 +190,18 @@ pct create "$var_ctid" "$TSTORE:vztmpl/$TEMPLATE" \
   --tags "stl2step" \
   --description "STL2STEP - STL naar STEP converter. Webpagina op poort $POORT, share 'cad' zonder wachtwoord." >/dev/null
 msg_ok "LXC-container $var_ctid aangemaakt"
+
+msg_info "Firewall instellen"
+cat > "/etc/pve/firewall/${var_ctid}.fw" <<FW_EOF
+[OPTIONS]
+enable: 1
+
+[RULES]
+IN ACCEPT -source $var_lan -p tcp -dport $POORT -log nolog # webpagina
+IN ACCEPT -source $var_lan -p tcp -dport 445 -log nolog # samba
+FW_EOF
+msg_ok "Firewall ingesteld voor $var_lan"
+pve-firewall status | grep -q 'enabled/running' || msg_warning "Datacenter-firewall staat uit: zet hem aan via Datacenter > Firewall > Options > Firewall: Yes"
 
 msg_info "Container starten"
 pct start "$var_ctid"
