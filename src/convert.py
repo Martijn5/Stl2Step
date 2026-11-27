@@ -22,6 +22,7 @@ HOEK_VLAK = 1.0      # graden: driehoeken binnen deze hoek van het startvlak hor
 HOEK_SCHERP = 30.0   # graden: knik groter dan dit = echte rand (geen gebogen oppervlak)
 MAX_FOUT = 0.02      # max. afwijking van de cirkelfit, als fractie van de straal
 MIN_DEKKING = 300.0  # graden: zo veel van de omtrek moet aanwezig zijn om als volledig gat te tellen
+HOEK_AS = 2.0        # graden: vouwlijn binnen deze hoek van de cilinderas hoort bij dezelfde cilinder
 SNAP_HOEK = 0.5      # graden: as binnen deze hoek van X/Y/Z wordt exact uitgelijnd
 NAAD_TOL = 0.01      # mm: tolerantie bij het naaien van de mesh tot een solid
 
@@ -54,8 +55,9 @@ def buurparen(T, nv):
     o = np.argsort(k, kind="stable")
     k, f = k[o], f[o]
     gelijk = np.nonzero(k[1:] == k[:-1])[0]
-    return np.stack([f[gelijk], f[gelijk + 1]], axis=1)
-
+    paren = np.stack([f[gelijk], f[gelijk + 1]], axis=1)
+    randen = np.stack([k[gelijk] // nv, k[gelijk] % nv], axis=1)  # gedeelde rand (2 punten)
+    return paren, randen
 
 def csr(paren, n):
     a = np.concatenate([paren[:, 0], paren[:, 1]])
@@ -93,22 +95,39 @@ def zoek(ouder, i):
         i = ouder[i]
     return i
 
+def gladde_patches(label, ng, n, opp, paren, randlengte):
+    """Voeg aangrenzende vlakgebieden samen tot een cilinder.
 
-def gladde_patches(label, ng, n, opp, paren):
-    """Voeg aangrenzende vlakgebieden samen als de knik klein is: dat is een gebogen oppervlak."""
+    Twee gebieden horen bij dezelfde cilinder als de knik klein is én de vouwlijn
+    (kruisproduct van de normalen) evenwijdig loopt aan de as van die cilinder.
+    Lange vouwlijnen gaan eerst, zodat een gatwand niet via een afronding aan een
+    groot vlak vastgroeit.
+    """
     gn = np.zeros((ng, 3))
     np.add.at(gn, label, n * opp[:, None])
     gn /= np.maximum(np.linalg.norm(gn, axis=1), 1e-30)[:, None]
     cos_s = math.cos(math.radians(HOEK_SCHERP))
     la, lb = label[paren[:, 0]], label[paren[:, 1]]
     m = la != lb
-    gp = np.unique(np.sort(np.stack([la[m], lb[m]], 1), axis=1), axis=0)
+    gp, inv = np.unique(np.sort(np.stack([la[m], lb[m]], 1), axis=1), axis=0, return_inverse=True)
+    rand = np.zeros(len(gp))                                   # totale vouwlengte per paar
+    np.add.at(rand, inv.reshape(-1), randlengte[m])
+    cos_as = math.cos(math.radians(HOEK_AS))
     ouder = np.arange(ng)
-    for a, b in gp:
-        if gn[a] @ gn[b] > cos_s:
-            ra, rb = zoek(ouder, a), zoek(ouder, b)
-            if ra != rb:
-                ouder[rb] = ra
+    as_ = np.zeros((ng, 3))                                    # as per groep, 0 = nog geen
+    for i in np.argsort(-rand):                                # langste vouw eerst
+        a, b = gp[i]
+        if gn[a] @ gn[b] <= cos_s:
+            continue                                           # scherpe rand
+        vouw = np.cross(gn[a], gn[b])                          # richting van de vouwlijn
+        vouw /= np.linalg.norm(vouw)                           # lengte 1
+        ra, rb = zoek(ouder, a), zoek(ouder, b)
+        if ra == rb:
+            continue
+        # alleen samenvoegen als de vouw langs de as van beide groepen loopt
+        if all(not as_[r].any() or abs(as_[r] @ vouw) > cos_as for r in (ra, rb)):
+            ouder[rb] = ra
+            as_[ra] = vouw                                     # groep onthoudt zijn as
     wortel = np.array([zoek(ouder, i) for i in range(ng)])
     patch = wortel[label]
     aantal_gebieden = np.bincount(wortel, minlength=ng)
@@ -179,10 +198,11 @@ def herken(P, T):
     if vol < 0:
         T = T[:, ::-1]
         n = -n
-    paren = buurparen(T, len(P))
+    paren, randen = buurparen(T,len(P))
     start, buur = csr(paren, len(T))
     label, ng = vlakgebieden(n, opp, start, buur)
-    patch, aantal = gladde_patches(label, ng, n, opp, paren)
+    randlengte = np.linalg.norm(P[randen[:, 0]] - P[randen[:, 1]], axis=1)
+    patch, aantal = gladde_patches(label, ng, n, opp, paren, randlengte)
 
     gaten, overgeslagen = [], []
     vlakken = 0

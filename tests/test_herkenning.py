@@ -79,6 +79,46 @@ def test_omgekeerde_normalen():
     controleer_gat(gaten[0], 10.0, 10.0, blind=False)
 
 
+def plaat_afronding(N=32, r=5.0, f=1.5, k=4, half=20.0, dikte=10.0, cx=3.0, cy=-2.0):
+    """Plaat met een doorlopend gat waarvan de bovenrand is afgerond (straal f, k facetten)."""
+    ang = np.arange(N) * 2 * np.pi / N
+    s = half / np.maximum(np.abs(np.cos(ang)), np.abs(np.sin(ang)))
+    sq = np.stack([s * np.cos(ang), s * np.sin(ang)], 1)
+    P, T = [], []
+
+    def ring(rad, z):
+        i = len(P)
+        P.extend([[cx + rad * np.cos(a), cy + rad * np.sin(a), z] for a in ang])
+        return i
+
+    def vierkant(z):
+        i = len(P)
+        P.extend([[x, y, z] for x, y in sq])
+        return i
+
+    st, sb = vierkant(dikte), vierkant(0.0)
+    ringen = [ring(r + f, dikte)]                       # begin van de afronding, op de bovenkant
+    for j in range(1, k + 1):                           # de afronding, in k stapjes naar beneden
+        t = np.radians(90 * j / k)
+        ringen.append(ring(r + f - f * np.sin(t), dikte - f + f * np.cos(t)))
+    rb = ring(r, 0.0)                                   # onderkant van de gatwand
+    ringen.append(rb)
+    for q in range(N):
+        w = (q + 1) % N
+        T += [[ringen[0] + q, st + q, st + w], [ringen[0] + q, st + w, ringen[0] + w]]  # bovenkant
+        T += [[sb + q, sb + w, st + w], [sb + q, st + w, st + q]]                      # buitenwand
+        T += [[rb + q, sb + w, sb + q], [rb + q, rb + w, sb + w]]                      # onderkant
+        for a, b in zip(ringen[:-1], ringen[1:]):                                      # afronding + gatwand
+            T += [[a + q, a + w, b + w], [a + q, b + w, b + q]]
+    return np.array(P, float), np.array(T)
+
+
+def test_gat_met_afronding():
+    gaten, _, _ = h.herken(*plaat_afronding())
+    assert len(gaten) == 1
+    controleer_gat(gaten[0], 10.0, 8.5, blind=False)
+
+
 if __name__ == "__main__":
     for naam, f in list(globals().items()):
         if naam.startswith("test_"):
