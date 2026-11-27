@@ -307,7 +307,7 @@ def main():
             except Exception as e:
                 regels.append("gaten snijden mislukt (%s); gaten blijven facetten" % e)
         if not solid.isValid():
-            regels.append("let op: vorm is niet geldig (mesh waarschijnlijk niet waterdicht)")
+            raise ValueError(f"geen massief deel: STL is niet waterdicht, repareer de mesh {bron}")
         solid.exportStep(doel)
         if os.environ.get("STL2STEP_PREVIEW"):
             try:
