@@ -328,6 +328,12 @@ class Handler(BaseHTTPRequestHandler):
         self.stuur(404, "niet gevonden")
 
     def do_POST(self):
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
+        verwacht = "http://" + host
+        if origin is not None and origin != verwacht:
+            return self.stuur(403, "verzoek van andere site geweigerd")
+
         pad = urllib.parse.urlsplit(self.path).path
         naam = self.naam_param()
         if not naam:
