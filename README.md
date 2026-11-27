@@ -6,7 +6,7 @@ Zet STL-bestanden automatisch om naar STEP, met **echte vlakken en echte ronde g
 
 ## Wat het doet
 
-- **Netwerkshare** `\\<ip>\cad` (zonder wachtwoord) met twee mappen: zet een STL in `stl/` en een paar seconden later staat `<naam>.step` in `step/`.
+- **Netwerkshare** `\\<ip>\cad` (optioneel, met eigen gebruiker en wachtwoord) met twee mappen: zet een STL in `stl/` en een paar seconden later staat `<naam>.step` in `step/`.
 - **Webpagina** op `http://<ip>:8080`: STL's uploaden door te slepen, status per bestand, STEP downloaden, foutmeldingen en logboek.
 - **3D-preview**: thumbnail per bestand en een draaibare 3D-weergave in de browser (WebGL2, geen plug-ins).
 - **Herkenning** (via FreeCAD, zonder scherm):
@@ -57,7 +57,7 @@ Opnieuw omzetten: overschrijf de STL, verwijder de STEP, of klik op **Opnieuw** 
 - Alleen **vlakken en rechte, volledig ronde gaten** worden omgezet. Uitstekende pennen, sleuven, afrondingen, verzinkingen en kegelvormige boorpunten blijven facetten (dat staat in het logboek).
 - De STL moet **gesloten (waterdicht)** zijn en in **mm**.
 - Grote STL's (meer dan ~50.000 driehoekjes) kunnen minuten duren.
-- Share en webpagina hebben **geen wachtwoord**: alleen bedoeld voor je eigen thuisnetwerk, niet openzetten naar internet.
+- De **webpagina** heeft geen wachtwoord. De firewall van de container laat alleen je eigen LAN toe (webpagina en, als je Samba kiest, de share). Niet openzetten naar internet.
 
 ## Opbouw
 
