@@ -82,6 +82,8 @@ actions:
 
 ## Wat je krijgt
 
+![bezig](img/melding-bezig.jpg) ![klaar](img/melding-klaar.jpg) ![mislukt](img/melding-mislukt.jpg)
+
 - ⏳ **bezig**: stil, zonder geluid.
 - ✅ **klaar**: vervangt de bezig-melding, met geluid.
 - ❌ **mislukt**: als *tijdgevoelig*, zodat hij ook door een focusmodus heen komt.
