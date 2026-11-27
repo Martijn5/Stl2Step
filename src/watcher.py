@@ -80,6 +80,7 @@ def converteer(stl):
     env = dict(os.environ, STL2STEP_IN=str(stl), STL2STEP_OUT=str(tmp), STL2STEP_REPORT=rapport,
                STL2STEP_PREVIEW=str(pvtmp))
     log("start: %s" % stl.name)
+    meld("bezig", stl.name, "")
     t0 = time.time()
     uitvoer = ""
     try:
