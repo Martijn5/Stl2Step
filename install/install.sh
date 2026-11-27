@@ -14,6 +14,8 @@ GEBRUIKER=cad
 DATA=/srv/cad
 APP=/opt/stl2step
 POORT=8080
+MET_SAMBA=${MET_SAMBA:-"nee"}
+PWBESTAND=/root/.stl2step-smbpw     # gebruikersnaam en wachtwoord, door stl2step.sh in de container gezet
 GN="\033[1;92m"; YW="\033[33m"; CL="\033[m"
 stap() { echo -e " ${YW}-${CL} $1..."; }
 ok()   { echo -e " ${GN}✓${CL} $1"; }
@@ -23,10 +25,10 @@ ok()   { echo -e " ${GN}✓${CL} $1"; }
 stap "Pakketten installeren (FreeCAD is groot, dit duurt een paar minuten)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends freecad python3-numpy samba unattended-upgrades >/dev/null
+apt-get install -y -qq --no-install-recommends freecad python3-numpy unattended-upgrades >/dev/null
 FREECADCMD=$(command -v freecadcmd || command -v FreeCADCmd || true)
 [ -n "$FREECADCMD" ] || { echo "freecadcmd niet gevonden na installatie."; exit 1; }
-ok "FreeCAD, numpy en Samba geinstalleerd"
+ok "FreeCAD en numpy geinstalleerd"
 
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APT_EOF'
 APT::Periodic::Update-Package-Lists "1";
@@ -95,32 +97,54 @@ done
 
 ok "Programma in $APP"
 
-stap "Samba-share instellen (zonder wachtwoord)"
-CONF=/etc/samba/smb.conf
-awk '/^\[cad\]/{skip=1;next} /^\[/{skip=0} !skip' "$CONF" > "$CONF.nieuw" && mv "$CONF.nieuw" "$CONF"
-grep -qi '^[[:space:]]*map to guest' "$CONF" || sed -i '0,/^\[global\]/s//[global]\n   map to guest = Bad User/' "$CONF"
-cat >> "$CONF" <<SMB_EOF
+if [ "$MET_SAMBA" = "ja" ]; then
+  stap "Samba-share instellen (met wachtwoord)"
+  apt-get install -y -qq --no-install-recommends samba >/dev/null
+  [ -f "$PWBESTAND" ] || { echo "Wachtwoordbestand $PWBESTAND ontbreekt."; exit 1; }
+  { read -r SMBUSER; read -r pw; } < "$PWBESTAND"
+  rm -f "$PWBESTAND"
+  id "$SMBUSER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$SMBUSER"
+  # oude Samba-gebruikers weg, alleen de gekozen gebruiker blijft
+  for oud in $(pdbedit -L | cut -d: -f1); do
+    if [ "$oud" != "$SMBUSER" ]; then
+      smbpasswd -x "$oud"
+    fi
+  done
+  net cache flush
+  printf '%s\n%s\n' "$pw" "$pw" | smbpasswd -s -a "$SMBUSER" >/dev/null
+  unset pw
+  CONF=/etc/samba/smb.conf
+  awk '/^\[cad\]/{skip=1;next} /^\[/{skip=0} !skip' "$CONF" > "$CONF.nieuw" && mv "$CONF.nieuw" "$CONF"
+  cat >> "$CONF" <<SMB_EOF
 [cad]
    comment = STL naar STEP
    path = $DATA
    browseable = yes
    read only = no
-   guest ok = yes
-   guest only = yes
+   guest ok = no
+   valid users = $SMBUSER
    force user = $GEBRUIKER
    create mask = 0664
    directory mask = 0775
 SMB_EOF
-ok "Share 'cad'"
+  ok "Share 'cad' voor gebruiker $SMBUSER"
+else
+  systemctl disable --now smbd nmbd 2>/dev/null || true
+  ok "Geen Samba-share (alleen de webpagina)"
+fi
 
 stap "Diensten starten"
+DIENSTEN="stl2step stl2step-web"
+if [ "$MET_SAMBA" = "ja" ]; then
+  DIENSTEN="$DIENSTEN smbd"
+fi
 systemctl daemon-reload
-systemctl enable -q stl2step.service stl2step-web.service
-systemctl restart stl2step.service stl2step-web.service smbd
+systemctl enable -q $DIENSTEN
+systemctl restart $DIENSTEN
 sleep 2
 
-for dienst in stl2step stl2step-web smbd; do
+for dienst in $DIENSTEN; do
   systemctl is-active -q "$dienst" || { echo "Dienst $dienst is niet gestart; kijk met: systemctl status $dienst"; exit 1; }
 done
 
-ok "Diensten stl2step, stl2step-web en smbd draaien"
+ok "Diensten draaien: $DIENSTEN"
