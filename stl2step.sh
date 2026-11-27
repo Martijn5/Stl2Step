@@ -9,10 +9,10 @@
 #     bash stl2step.sh update 105   STL2STEP in bestaande container 105 bijwerken
 #
 # Maakt een Debian 12 LXC met:
-#   - Samba-share "cad" (zonder wachtwoord) met de mappen stl/ en step/
+#   - Samba-share "cad" met eigen gebruiker, mappen stl/ en step/
 #   - dienst die elke STL in stl/ omzet naar step/<naam>.step (FreeCAD, zonder scherm)
 #   - webpagina op poort 8080 (uploaden, status, 3D-preview, downloaden)
-# Share en webpagina hebben geen wachtwoord: alleen voor je eigen thuisnetwerk.
+# De webpagina heeft geen wachtwoord; de firewall laat alleen je eigen lan toe.
 
 set -Eeuo pipefail
 
@@ -30,6 +30,9 @@ var_ip="dhcp"       # of bijv. 192.168.25.40/24
 var_gw=""
 var_unprivileged="1"
 var_lan=""          # LAN-subnet dat bij webpagina en share mag, bijv. 192.168.1.0/24
+var_samba="nee"     # ja = Windows-share met wachtwoord
+var_smbuser="cad"   # gebruikersnaam voor de share
+var_smbpw=""
 POORT=8080
 
 YW="\033[33m"; BL="\033[36m"; RD="\033[01;31m"; GN="\033[1;92m"; DGN="\033[32m"; CL="\033[m"; BFR="\\r\\033[K"; HOLD=" "
@@ -65,6 +68,26 @@ controleer_host() {
 
 vraag() {  # vraag "Titel" "Tekst" "standaardwaarde"
   whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "$1" --inputbox "$2" 9 62 "$3" 3>&1 1>&2 2>&3 || afbreken
+}
+
+vraag_samba() {  # vult var_samba, var_smbuser en var_smbpw; Nee = geen share
+  whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "SAMBA" --yesno \
+    "Windows-share (Samba) installeren?\n\nZonder share werk je alleen via de webpagina." 10 62 || return 0
+  var_samba="ja"
+  var_smbuser=$(vraag "SAMBA" "Gebruikersnaam voor de share:" "$var_smbuser")
+  [[ "$var_smbuser" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { msg_error "Ongeldige gebruikersnaam: $var_smbuser"; exit 1; }
+  local pw2
+  while true; do
+    var_smbpw=$(whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "SAMBA" --passwordbox "Wachtwoord voor $var_smbuser (minstens 12 tekens):" 9 62 3>&1 1>&2 2>&3) || afbreken
+    pw2=$(whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "SAMBA" --passwordbox "Herhaal het wachtwoord:" 9 62 3>&1 1>&2 2>&3) || afbreken
+    if [ "$var_smbpw" != "$pw2" ]; then
+      whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "SAMBA" --msgbox "De wachtwoorden zijn niet gelijk. Probeer opnieuw." 8 62
+    elif [ ${#var_smbpw} -lt 12 ]; then
+      whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "SAMBA" --msgbox "Te kort: minstens 12 tekens." 8 62
+    else
+      break
+    fi
+  done
 }
 
 kies_opslag() {  # kies_opslag <inhoudstype> <omschrijving>
@@ -127,7 +150,17 @@ installeer_in_ct() {  # installeer_in_ct <ctid>: code ophalen, in de container z
   pct push "$1" "$werk/stl2step.tar.gz" /root/stl2step.tar.gz >/dev/null
   rm -rf "$werk"
   msg_ok "Code klaargezet in container $1"
-  pct exec "$1" -- bash -c 'rm -rf /root/stl2step-bron && mkdir /root/stl2step-bron && tar -xzf /root/stl2step.tar.gz -C /root/stl2step-bron && rm /root/stl2step.tar.gz && bash /root/stl2step-bron/install/install.sh'
+
+  if [ "$var_samba" = "ja" ]; then
+    local pwbestand
+    pwbestand=$(mktemp)
+    chmod 600 "$pwbestand"
+    printf '%s\n%s\n' "$var_smbuser" "$var_smbpw" > "$pwbestand"
+    pct push "$1" "$pwbestand" /root/.stl2step-smbpw --perms 600
+    rm -f "$pwbestand"
+  fi
+
+  pct exec "$1" -- env MET_SAMBA="$var_samba" bash -c 'rm -rf /root/stl2step-bron && mkdir /root/stl2step-bron && tar -xzf /root/stl2step.tar.gz -C /root/stl2step-bron && rm /root/stl2step.tar.gz && bash /root/stl2step-bron/install/install.sh'
 }
 
 ct_ip() { pct exec "$1" -- hostname -I 2>/dev/null | awk '{print $1}'; }
@@ -139,7 +172,9 @@ klaar_melding() {
   msg_ok "Voltooid!"
   echo -e " ${APP} is bereikbaar op:"
   echo -e "   ${BL}Webpagina:${CL}  http://${ip:-<ip-van-container>}:${POORT}"
-  echo -e "   ${BL}Share:${CL}      \\\\\\\\${ip:-<ip-van-container>}\\\\cad   (geen wachtwoord; mappen stl en step)"
+  if [ "$var_samba" = "ja" ]; then
+    echo -e "   ${BL}Share:${CL}      \\\\\\\\${ip:-<ip-van-container>}\\\\cad   (met wachtwoord; mappen stl en step)"
+  fi
   echo -e " Console van de container:  pct enter $1"
   echo -e " Later bijwerken:           bash stl2step.sh update $1   (of de curl-regel, met  _ update $1  erachter)"
 }
@@ -151,9 +186,11 @@ if [ "${1:-}" = "update" ]; then
   ctid="${2:-}"
   [[ "$ctid" =~ ^[0-9]+$ ]] || { msg_error "Gebruik: bash stl2step.sh update <container-ID>"; exit 1; }
   pct status "$ctid" 2>/dev/null | grep -q running || { msg_error "Container $ctid bestaat niet of draait niet."; exit 1; }
+  vraag_samba
   echo -e " ${YW}STL2STEP bijwerken in container $ctid${CL}"
   installeer_in_ct "$ctid"
   klaar_melding "$ctid"
+
   exit 0
 fi
 
@@ -163,6 +200,7 @@ controleer_host
 whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "$APP LXC" --yesno \
   "Dit maakt een nieuwe $APP LXC-container aan. Doorgaan?" 9 62 || afbreken
 instellingen
+vraag_samba
 
 TSTORE=$(kies_opslag vztmpl "het template") || exit 1
 CSTORE=$(kies_opslag rootdir "de container") || exit 1
@@ -188,17 +226,22 @@ pct create "$var_ctid" "$TSTORE:vztmpl/$TEMPLATE" \
   --rootfs "$CSTORE:$var_disk" --net0 "$NET" \
   --unprivileged "$var_unprivileged" --features nesting=1 --onboot 1 --ostype debian \
   --tags "stl2step" \
-  --description "STL2STEP - STL naar STEP converter. Webpagina op poort $POORT, share 'cad' zonder wachtwoord." >/dev/null
+  --description "STL2STEP - STL naar STEP converter. Webpagina op poort $POORT." >/dev/null
 msg_ok "LXC-container $var_ctid aangemaakt"
 
 msg_info "Firewall instellen"
+smb_regel=""
+if [ "$var_samba" = "ja" ]; then
+  smb_regel="IN ACCEPT -source $var_lan -p tcp -dport 445 -log nolog # samba"
+fi
+
 cat > "/etc/pve/firewall/${var_ctid}.fw" <<FW_EOF
 [OPTIONS]
 enable: 1
 
 [RULES]
 IN ACCEPT -source $var_lan -p tcp -dport $POORT -log nolog # webpagina
-IN ACCEPT -source $var_lan -p tcp -dport 445 -log nolog # samba
+$smb_regel
 FW_EOF
 msg_ok "Firewall ingesteld voor $var_lan"
 pve-firewall status | grep -q 'enabled/running' || msg_warning "Datacenter-firewall staat uit: zet hem aan via Datacenter > Firewall > Options > Firewall: Yes"
@@ -206,7 +249,6 @@ pve-firewall status | grep -q 'enabled/running' || msg_warning "Datacenter-firew
 msg_info "Container starten"
 pct start "$var_ctid"
 msg_ok "Container gestart"
-
 msg_info "Wachten op netwerk"
 if ! pct exec "$var_ctid" -- bash -c 'for i in $(seq 1 45); do getent hosts deb.debian.org >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; then
   msg_error "De container heeft geen internetverbinding (controleer bridge, IP en gateway)."
