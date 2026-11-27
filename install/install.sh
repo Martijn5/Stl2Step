@@ -4,6 +4,10 @@
 #     bash install/install.sh
 # Opnieuw uitvoeren = bijwerken.
 set -euo pipefail
+
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+echo "LANG=C.UTF-8" > /etc/default/locale
+
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src" && pwd)"
 [ -f "$SRC/convert.py" ] || { echo "Bronbestanden niet gevonden in $SRC"; exit 1; }
 GEBRUIKER=cad
@@ -19,10 +23,15 @@ ok()   { echo -e " ${GN}✓${CL} $1"; }
 stap "Pakketten installeren (FreeCAD is groot, dit duurt een paar minuten)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends freecad python3-numpy samba >/dev/null
+apt-get install -y -qq --no-install-recommends freecad python3-numpy samba unattended-upgrades >/dev/null
 FREECADCMD=$(command -v freecadcmd || command -v FreeCADCmd || true)
 [ -n "$FREECADCMD" ] || { echo "freecadcmd niet gevonden na installatie."; exit 1; }
 ok "FreeCAD, numpy en Samba geinstalleerd"
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APT_EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT_EOF
 
 stap "Gebruiker en mappen aanmaken"
 id "$GEBRUIKER" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/stl2step --shell /usr/sbin/nologin "$GEBRUIKER"
@@ -66,6 +75,24 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 UNIT_EOF
+
+for dienst in stl2step stl2step-web; do
+  mkdir -p "/etc/systemd/system/$dienst.service.d"
+  cat > "/etc/systemd/system/$dienst.service.d/hardening.conf" <<'HARD_EOF'
+[Service]
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/cad/stl /srv/cad/step /var/lib/stl2step/
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+HARD_EOF
+done
+
 ok "Programma in $APP"
 
 stap "Samba-share instellen (zonder wachtwoord)"
@@ -91,5 +118,9 @@ systemctl daemon-reload
 systemctl enable -q stl2step.service stl2step-web.service
 systemctl restart stl2step.service stl2step-web.service smbd
 sleep 2
-systemctl is-active -q stl2step.service stl2step-web.service smbd || { echo "Een dienst is niet gestart; kijk met: systemctl status stl2step stl2step-web smbd"; exit 1; }
+
+for dienst in stl2step stl2step-web smbd; do
+  systemctl is-active -q "$dienst" || { echo "Dienst $dienst is niet gestart; kijk met: systemctl status $dienst"; exit 1; }
+done
+
 ok "Diensten stl2step, stl2step-web en smbd draaien"
