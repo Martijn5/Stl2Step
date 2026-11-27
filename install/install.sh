@@ -15,6 +15,7 @@ DATA=/srv/cad
 APP=/opt/stl2step
 POORT=8080
 MET_SAMBA=${MET_SAMBA:-"nee"}
+MET_MQTT=${MET_MQTT:-nee}           
 PWBESTAND=/root/.stl2step-smbpw     # gebruikersnaam en wachtwoord, door stl2step.sh in de container gezet
 GN="\033[1;92m"; YW="\033[33m"; CL="\033[m"
 stap() { echo -e " ${YW}-${CL} $1..."; }
@@ -35,6 +36,14 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT_EOF
 
+
+if [ "$MET_MQTT" = "ja" ]; then
+  apt-get install -y -qq --no-install-recommends python3-paho-mqtt >/dev/null
+  ok "MQTT-melding aan (python3-paho-mqtt)"
+else
+  rm -f /etc/stl2step/mqtt.env
+fi
+
 stap "Gebruiker en mappen aanmaken"
 id "$GEBRUIKER" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/stl2step --shell /usr/sbin/nologin "$GEBRUIKER"
 mkdir -p "$DATA/stl" "$DATA/step" "$APP"
@@ -52,7 +61,8 @@ After=network.target
 
 [Service]
 User=$GEBRUIKER
-Environment=STL_DIR=$DATA/stl STEP_DIR=$DATA/step FREECADCMD=$FREECADCMD QT_QPA_PLATFORM=offscreen LANG=C.UTF-8
+Environment=STL_DIR=$DATA/stl STEP_DIR=$DATA/step FREECADCMD=$FREECADCMD QT_QPA_PLATFORM=offscreen LANG=C.UTF-8 
+EnvironmentFile=-/etc/stl2step/mqtt.env
 ExecStart=/usr/bin/python3 $APP/watcher.py
 Restart=always
 RestartSec=5

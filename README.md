@@ -12,6 +12,7 @@ Zet STL-bestanden automatisch om naar STEP, met **echte vlakken en echte ronde g
 - **Herkenning** (via FreeCAD, zonder scherm):
   - driehoekjes in hetzelfde vlak worden samengevoegd tot één vlak;
   - ronde gaten (doorlopend en blind) worden herkend en vervangen door een echt cilindervlak, met diameter en diepte in het logboek.
+- **Melding via MQTT** (optioneel): na elke conversie `klaar` of `mislukt` op `stl2step/status`, met een sensor in Home Assistant via discovery.
 
 ![3D-preview](docs/preview.png)
 

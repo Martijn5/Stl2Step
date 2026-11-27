@@ -33,6 +33,12 @@ var_lan=""          # LAN-subnet dat bij webpagina en share mag, bijv. 192.168.1
 var_samba="nee"     # ja = Windows-share met wachtwoord
 var_smbuser="cad"   # gebruikersnaam voor de share
 var_smbpw=""
+
+var_mqtt="nee"      # ja = melding via MQTT (bijv. Home Assistant)
+var_mqtt_host=""
+var_mqtt_user="stl2step"
+var_mqtt_pw=""
+
 POORT=8080
 
 YW="\033[33m"; BL="\033[36m"; RD="\033[01;31m"; GN="\033[1;92m"; DGN="\033[32m"; CL="\033[m"; BFR="\\r\\033[K"; HOLD=" "
@@ -88,6 +94,17 @@ vraag_samba() {  # vult var_samba, var_smbuser en var_smbpw; Nee = geen share
       break
     fi
   done
+}
+
+
+vraag_mqtt() {  # vult var_mqtt*; Nee = geen MQTT-melding
+  whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "MQTT" --yesno \
+    "Melding via MQTT (bijv. naar Home Assistant) instellen?" 9 62 || return 0
+  var_mqtt="ja"
+  var_mqtt_host=$(vraag "MQTT" "IP-adres of naam van de broker:" "$var_mqtt_host")
+  [[ "$var_mqtt_host" =~ ^[A-Za-z0-9.-]+$ ]] || { msg_error "Ongeldige broker: $var_mqtt_host"; exit 1; }
+  var_mqtt_user=$(vraag "MQTT" "Gebruikersnaam:" "$var_mqtt_user")
+  var_mqtt_pw=$(whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "MQTT" --passwordbox "Wachtwoord van $var_mqtt_user:" 9 62 3>&1 1>&2 2>&3) || afbreken
 }
 
 kies_opslag() {  # kies_opslag <inhoudstype> <omschrijving>
@@ -160,7 +177,17 @@ installeer_in_ct() {  # installeer_in_ct <ctid>: code ophalen, in de container z
     rm -f "$pwbestand"
   fi
 
-  pct exec "$1" -- env MET_SAMBA="$var_samba" bash -c 'rm -rf /root/stl2step-bron && mkdir /root/stl2step-bron && tar -xzf /root/stl2step.tar.gz -C /root/stl2step-bron && rm /root/stl2step.tar.gz && bash /root/stl2step-bron/install/install.sh'
+  if [ "$var_mqtt" = "ja" ]; then
+    local mqttbestand
+    mqttbestand=$(mktemp)
+    chmod 600 "$mqttbestand"
+    printf 'MQTT_HOST=%s\nMQTT_USER=%s\nMQTT_PASS=%s\n' "$var_mqtt_host" "$var_mqtt_user" "$var_mqtt_pw" > "$mqttbestand"
+    pct exec "$1" -- mkdir -p /etc/stl2step
+    pct push "$1" "$mqttbestand" /etc/stl2step/mqtt.env --perms 600
+    rm -f "$mqttbestand"
+  fi
+
+  pct exec "$1" -- env MET_SAMBA="$var_samba" MET_MQTT="$var_mqtt" bash -c 'rm -rf /root/stl2step-bron && mkdir /root/stl2step-bron && tar -xzf /root/stl2step.tar.gz -C /root/stl2step-bron && rm /root/stl2step.tar.gz && bash /root/stl2step-bron/install/install.sh'
 }
 
 ct_ip() { pct exec "$1" -- hostname -I 2>/dev/null | awk '{print $1}'; }
@@ -187,6 +214,7 @@ if [ "${1:-}" = "update" ]; then
   [[ "$ctid" =~ ^[0-9]+$ ]] || { msg_error "Gebruik: bash stl2step.sh update <container-ID>"; exit 1; }
   pct status "$ctid" 2>/dev/null | grep -q running || { msg_error "Container $ctid bestaat niet of draait niet."; exit 1; }
   vraag_samba
+  vraag_mqtt
   echo -e " ${YW}STL2STEP bijwerken in container $ctid${CL}"
   installeer_in_ct "$ctid"
   klaar_melding "$ctid"
@@ -201,6 +229,7 @@ whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "$APP LXC" --yesn
   "Dit maakt een nieuwe $APP LXC-container aan. Doorgaan?" 9 62 || afbreken
 instellingen
 vraag_samba
+vraag_mqtt
 
 TSTORE=$(kies_opslag vztmpl "het template") || exit 1
 CSTORE=$(kies_opslag rootdir "de container") || exit 1
