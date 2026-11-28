@@ -15,7 +15,7 @@ DATA=/srv/cad
 APP=/opt/stl2step
 POORT=8080
 MET_SAMBA=${MET_SAMBA:-"nee"}
-MET_MQTT=${MET_MQTT:-nee}           
+MET_MQTT=${MET_MQTT:-nee}
 PWBESTAND=/root/.stl2step-smbpw     # gebruikersnaam en wachtwoord, door stl2step.sh in de container gezet
 GN="\033[1;92m"; YW="\033[33m"; CL="\033[m"
 stap() { echo -e " ${YW}-${CL} $1..."; }
@@ -40,6 +40,8 @@ APT_EOF
 if [ "$MET_MQTT" = "ja" ]; then
   apt-get install -y -qq --no-install-recommends python3-paho-mqtt >/dev/null
   ok "MQTT-melding aan (python3-paho-mqtt)"
+elif [ "$MET_MQTT" = "behouden" ]; then
+  ok "MQTT-instellingen ongewijzigd"
 else
   rm -f /etc/stl2step/mqtt.env
 fi
@@ -148,6 +150,8 @@ if [ "$MET_SAMBA" = "ja" ]; then
    directory mask = 0775
 SMB_EOF
   ok "Share 'cad' voor gebruiker $SMBUSER"
+elif [ "$MET_SAMBA" = "behouden" ]; then
+  ok "Samba-instellingen ongewijzigd"
 else
   systemctl disable --now smbd nmbd 2>/dev/null || true
   ok "Geen Samba-share (alleen de webpagina)"
