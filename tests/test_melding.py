@@ -36,3 +36,23 @@ def test_meld_stuurt_juiste_topic_en_velden(monkeypatch):
     assert data["status"] == "klaar"
     assert data["bestand"] == "blok.stl"
     assert "tijd" in data
+
+def test_hangende_broker_blokkeert_watcher_niet(monkeypatch):
+    import time
+    import types
+    paho = types.ModuleType("paho")
+    paho.mqtt = types.ModuleType("paho.mqtt")
+    paho.mqtt.publish = types.ModuleType("paho.mqtt.publish")
+    paho.mqtt.publish.single = lambda *a, **k: time.sleep(60)   # broker die nooit antwoordt
+    monkeypatch.setitem(sys.modules, "paho", paho)
+    monkeypatch.setitem(sys.modules, "paho.mqtt", paho.mqtt)
+    monkeypatch.setitem(sys.modules, "paho.mqtt.publish", paho.mqtt.publish)
+    monkeypatch.setattr(w, "MQTT_HOST", "192.0.2.1")
+    monkeypatch.setattr(w, "MQTT_TIMEOUT", 1)
+    logs = []
+    monkeypatch.setattr(w, "log", logs.append)
+    t0 = time.time()
+    w.meld("klaar", "blok.stl", "3 s")
+    assert time.time() - t0 < 5
+    assert len(logs) == 1
+    assert "geen andwoord" in logs[0]
