@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -19,6 +20,7 @@ LOG = STEP / "conversie.log"
 PREVIEW = Path(os.environ.get("PREVIEW_DIR", Path.home() / "preview"))   # 3D-previews voor de webpagina
 BEZIG = STATE.with_name("stl2step_bezig.txt")           # naam van het bestand dat nu wordt omgezet (voor de webpagina)
 MQTT_HOST = os.environ.get("MQTT_HOST", "")                  # leeg = geen MQTT-melding
+MQTT_TIMEOUT = float(os.environ.get("MQTT_TIMEOUT", "5"))
 
 
 def log(msg):
@@ -32,16 +34,24 @@ def log(msg):
 
 
 def stuur(topic, data):
-    """Stuur een bericht naar MQTT. Mag de watcher nooit laten crashen."""
+    """Stuur een bericht naar MQTT. Mag de watcher nooit laten crashen of laten hangen."""
     if not MQTT_HOST:
         return
-    try:
-        import paho.mqtt.publish as publish
-        publish.single(topic, json.dumps(data), qos=1, retain=True, hostname=MQTT_HOST,
-                       auth={"username": os.environ.get("MQTT_USER", ""),
-                             "password": os.environ.get("MQTT_PASS", "")})
-    except Exception as e:
-        log("MQTT-melding mislukt: %s" % e)
+
+    def verstuur():
+        try:
+            import paho.mqtt.publish as publish
+            publish.single(topic, json.dumps(data), qos=1, retain=True, hostname=MQTT_HOST,
+                           auth={"username": os.environ.get("MQTT_USER", ""),
+                                 "password": os.environ.get("MQTT_PASS", "")})
+        except Exception as e:
+            log("MQTT-melding mislukt: %s" % e)
+
+    t = threading.Thread(target=verstuur, daemon=True)
+    t.start()
+    t.join(MQTT_TIMEOUT)
+    if t.is_alive():
+        log("MQTT-melding mislukt: geen antwoord binnen %.0f s" % MQTT_TIMEOUT)
 
 
 def meld(status, bestand, tekst):
