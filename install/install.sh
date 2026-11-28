@@ -102,6 +102,16 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
+CapabilityBoundingSet=
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+PrivateDevices=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
 HARD_EOF
 done
 
