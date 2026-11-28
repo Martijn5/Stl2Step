@@ -55,4 +55,4 @@ def test_hangende_broker_blokkeert_watcher_niet(monkeypatch):
     w.meld("klaar", "blok.stl", "3 s")
     assert time.time() - t0 < 5
     assert len(logs) == 1
-    assert "geen andwoord" in logs[0]
+    assert "geen antwoord" in logs[0]
