@@ -199,7 +199,7 @@ klaar_melding() {
   msg_ok "Voltooid!"
   echo -e " ${APP} is bereikbaar op:"
   echo -e "   ${BL}Webpagina:${CL}  http://${ip:-<ip-van-container>}:${POORT}"
-  if [ "$var_samba" = "ja" ]; then
+  if [ "$var_samba" = "ja" ] || pct exec "$1" -- systemctl is-active -q smbd; then
     echo -e "   ${BL}Share:${CL}      \\\\\\\\${ip:-<ip-van-container>}\\\\cad   (met wachtwoord; mappen stl en step)"
   fi
   echo -e " Console van de container:  pct enter $1"
@@ -213,8 +213,14 @@ if [ "${1:-}" = "update" ]; then
   ctid="${2:-}"
   [[ "$ctid" =~ ^[0-9]+$ ]] || { msg_error "Gebruik: bash stl2step.sh update <container-ID>"; exit 1; }
   pct status "$ctid" 2>/dev/null | grep -q running || { msg_error "Container $ctid bestaat niet of draait niet."; exit 1; }
-  vraag_samba
-  vraag_mqtt
+  if whiptail --backtitle "Proxmox VE Helper Script - $APP" --title "INSTELLINGEN" --yesno \
+    "Wil je de Samba en MQTT instellingen behouden?" 9 62; then
+    var_samba="behouden"
+    var_mqtt="behouden"
+  else
+    vraag_samba
+    vraag_mqtt
+  fi
   echo -e " ${YW}STL2STEP bijwerken in container $ctid${CL}"
   installeer_in_ct "$ctid"
   klaar_melding "$ctid"
